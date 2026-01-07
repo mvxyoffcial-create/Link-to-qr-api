@@ -1,29 +1,19 @@
-"""
-Vercel QR Code Generator API with CORS
-File structure:
-/api/qr.py (this file)
-/requirements.txt
-/vercel.json
-"""
-
-# api/qr.py
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 import qrcode
 from io import BytesIO
-import base64
 import json
+from datetime import datetime
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Parse query parameters
         parsed_path = urlparse(self.path)
         params = parse_qs(parsed_path.query)
         
-        # Get parameters with defaults
+        # Get parameters
         data = params.get('data', [''])[0]
-        size = int(params.get('size', ['300'])[0])
+        size = min(int(params.get('size', ['300'])[0]), 2000)
         fg_color = params.get('fg', ['black'])[0]
         bg_color = params.get('bg', ['white'])[0]
         format_type = params.get('format', ['png'])[0].lower()
@@ -38,24 +28,31 @@ class handler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             response = {
+                'status': 'error',
                 'error': 'Missing required parameter: data',
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
                 'usage': {
                     'endpoint': '/api/qr',
+                    'method': 'GET',
                     'parameters': {
                         'data': 'Required - Text or URL to encode',
-                        'size': 'Optional - QR code size in pixels (default: 300)',
+                        'size': 'Optional - Size in pixels (default: 300, max: 2000)',
                         'fg': 'Optional - Foreground color (default: black)',
                         'bg': 'Optional - Background color (default: white)',
                         'format': 'Optional - png or svg (default: png)'
                     },
-                    'example': '/api/qr?data=https://example.com&size=400&fg=blue&bg=yellow'
-                }
+                    'examples': [
+                        '/api/qr?data=https://example.com',
+                        '/api/qr?data=Hello%20World&size=400&fg=blue&bg=yellow',
+                        '/api/qr?data=Contact&format=svg&fg=%23FF5733'
+                    ]
+                },
+                'developed_by': 'zerodev'
             }
             self.wfile.write(json.dumps(response, indent=2).encode())
             return
         
         try:
-            # Generate QR code
             qr = qrcode.QRCode(
                 version=1,
                 error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -66,7 +63,6 @@ class handler(BaseHTTPRequestHandler):
             qr.make(fit=True)
             
             if format_type == 'svg':
-                # SVG format
                 from qrcode.image.svg import SvgPathImage
                 img = qr.make_image(
                     image_factory=SvgPathImage,
@@ -76,59 +72,37 @@ class handler(BaseHTTPRequestHandler):
                 buffer = BytesIO()
                 img.save(buffer)
                 self.send_header('Content-type', 'image/svg+xml')
+                self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
+                self.send_header('X-Developed-By', 'zerodev')
                 self.end_headers()
                 self.wfile.write(buffer.getvalue())
             else:
-                # PNG format (default)
                 img = qr.make_image(fill_color=fg_color, back_color=bg_color)
-                
-                # Resize if needed
                 if size != 300:
                     img = img.resize((size, size))
                 
                 buffer = BytesIO()
                 img.save(buffer, format='PNG')
                 self.send_header('Content-type', 'image/png')
-                self.send_header('Cache-Control', 'public, max-age=31536000')
+                self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
+                self.send_header('X-Developed-By', 'zerodev')
                 self.end_headers()
                 self.wfile.write(buffer.getvalue())
                 
         except Exception as e:
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            response = {'error': str(e)}
+            response = {
+                'status': 'error',
+                'error': str(e),
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'developed_by': 'zerodev'
+            }
             self.wfile.write(json.dumps(response).encode())
     
     def do_OPTIONS(self):
-        # Handle CORS preflight
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
-
-
-# requirements.txt content:
-"""
-qrcode[pil]==7.4.2
-pillow==10.1.0
-"""
-
-# vercel.json content:
-"""
-{
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/qr.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/qr",
-      "dest": "api/qr.py"
-    }
-  ]
-}
-"""
